@@ -1,0 +1,24 @@
+[Unit]
+Description=Codex status bridge for Quickshell
+# Ordering does not require or start graphical-session.target.
+After=graphical-session.target
+PartOf=graphical-session.target
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
+[Service]
+Type=simple
+WorkingDirectory=@REPO@
+ExecStart=@PYTHON@ -m codex_status --codex-bin @CODEX@@OPTIONS@
+RuntimeDirectory=codex-quickshell
+RuntimeDirectoryMode=0700
+UMask=0077
+NoNewPrivileges=true
+# Codex's existing control socket resolves beneath /tmp/codex-daemon-<uid>.
+# PrivateTmp would hide that socket and prevent this read-only client attaching.
+Restart=on-failure
+RestartSec=3
+
+[Install]
+# Hyprland sessions may not start graphical-session.target; attach at user-manager startup.
+WantedBy=default.target
