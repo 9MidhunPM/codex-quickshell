@@ -52,8 +52,11 @@ Item {
                         ColumnLayout {
                             Layout.fillWidth: true
                             Layout.preferredWidth: 1
+                            Layout.minimumWidth: 0
                             spacing: 3
                             Text {
+                                Layout.fillWidth: true
+                                wrapMode: Text.Wrap
                                 text: "Weekly left"
                                 textFormat: Text.PlainText
                                 color: root.controller.secondary
@@ -75,8 +78,11 @@ Item {
                         ColumnLayout {
                             Layout.fillWidth: true
                             Layout.preferredWidth: 1
+                            Layout.minimumWidth: 0
                             spacing: 3
                             Text {
+                                Layout.fillWidth: true
+                                wrapMode: Text.Wrap
                                 text: "Codex credits"
                                 textFormat: Text.PlainText
                                 color: root.controller.secondary

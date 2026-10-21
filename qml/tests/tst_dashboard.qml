@@ -231,7 +231,8 @@ TestCase {
             var position = credits.mapToItem(overview, 0, 0);
             verify(position.y >= 0);
             verify(position.y + credits.height <= overview.height);
-            verify(position.x >= 0 && position.x + credits.width <= overview.width);
+            verify(position.x >= 0 && position.x + credits.width <= overview.width,
+                "Credit bounds x=" + position.x + " width=" + credits.width + " overview=" + overview.width);
         }
     }
     function test_missing_weekly_is_unavailable_even_with_another_window() {
