@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "codex-quickshell"
+dynamic = ["version"]
+description = "Private local Codex telemetry for any Quickshell configuration"
+readme = "README.md"
+requires-python = ">=3.11"
+license = {text = "MIT"}
+dependencies = []
+classifiers = [
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+]
+
+[project.scripts]
+codex-quickshell = "codex_status.service:main"
+
+[tool.setuptools]
+packages = ["codex_status"]
+
+[tool.setuptools.dynamic]
+version = {attr = "codex_status.__version__"}
