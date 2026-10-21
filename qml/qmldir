@@ -1,0 +1,11 @@
+CodexService 1.0 CodexService.qml
+CodexStatus 1.0 CodexStatus.qml
+CodexPill 1.0 CodexPill.qml
+StatusButton 1.0 StatusButton.qml
+CodexDashboard 1.0 CodexDashboard.qml
+UsagePanel 1.0 UsagePanel.qml
+AgentsPanel 1.0 AgentsPanel.qml
+AgentCard 1.0 AgentCard.qml
+DashboardAction 1.0 DashboardAction.qml
+DashboardTab 1.0 DashboardTab.qml
+OverviewPanel 1.0 OverviewPanel.qml
