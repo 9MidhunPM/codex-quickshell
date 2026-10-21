@@ -23,7 +23,7 @@ class Issue:
 RULES = {
     "provider-token": re.compile(r"\b(?:sk-(?:proj-|svcacct-)?[A-Za-z0-9_-]{32,}|gh[pousr]_[A-Za-z0-9]{30,}|github_pat_[A-Za-z0-9_]{40,}|AKIA[A-Z0-9]{16})\b"),
     "private-key": re.compile(r"-----BEGIN (?:RSA |EC |OPENSSH |DSA )?PRIVATE KEY-----"),
-    "personal-home": re.compile(r"/home/(?!user(?:/|\b)|example(?:/|\b)|demo(?:/|\b)|test(?:/|\b)|runner(?:/|\b))[^/\s\"'<>]+/"),
+    "personal-home": re.compile(r"/home/(?!user(?:/|\b)|example(?:/|\b)|demo(?:/|\b)|test(?:/|\b)|runner(?:/|\b))[A-Za-z0-9_.-]+/"),
 }
 EMAIL = re.compile(r"\b[A-Za-z0-9._%+-]+@([A-Za-z0-9.-]+\.[A-Za-z]{2,})\b")
 SAFE_EMAIL_DOMAINS = {"example.com", "example.org", "example.net", "users.noreply.github.com"}
