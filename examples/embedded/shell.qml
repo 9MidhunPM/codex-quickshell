@@ -1,6 +1,6 @@
 import QtQuick
 import Quickshell
-import "../../qml" as Codex
+import "CodexStatusModule" as Codex
 
 // For shells that already provide a popup/window host, use the service directly.
 ShellRoot {

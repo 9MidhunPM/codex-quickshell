@@ -1,5 +1,5 @@
 import Quickshell
-import "../../qml" as Codex
+import "CodexStatusModule" as Codex
 
 // Run independently: qs -p examples/standalone
 ShellRoot {

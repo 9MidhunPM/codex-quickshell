@@ -1,6 +1,6 @@
 import QtQuick
 import Quickshell
-import "../../qml" as Codex
+import "CodexStatusModule" as Codex
 
 // Copy the controller and pill into your own root/bar. No file patching required.
 // This floating launcher is only an executable demonstration of an existing bar.

@@ -1,5 +1,5 @@
 import Quickshell
-import "../../qml/adapters/hyprland" as CodexHyprland
+import "CodexStatusModule/adapters/hyprland" as CodexHyprland
 
 // Optional overlay. Requires Hyprland; the portable module does not import it.
 ShellRoot {
