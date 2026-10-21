@@ -7,6 +7,7 @@ from pathlib import Path
 import stat
 import subprocess
 import tempfile
+from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
@@ -17,6 +18,23 @@ SPEC = importlib.util.spec_from_file_location(
 installer = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(installer)
 TEMPLATE = (installer.REPO / "systemd" / (installer.UNIT + ".in")).read_bytes()
+
+
+class AncestorOwnershipTests(unittest.TestCase):
+    def test_foreign_owned_sticky_ancestor_is_refused(self):
+        info = SimpleNamespace(st_mode=stat.S_IFDIR | 0o1777, st_uid=1001)
+        with patch.object(installer.os, "getuid", return_value=1000), \
+                patch.object(Path, "lstat", return_value=info):
+            with self.assertRaises(installer.InstallError):
+                installer.check_parents(Path("/tmp/example/config"))
+
+    def test_root_and_current_user_owned_sticky_ancestors_remain_supported(self):
+        for owner in (0, 1000):
+            info = SimpleNamespace(st_mode=stat.S_IFDIR | 0o1777, st_uid=owner)
+            with self.subTest(owner=owner), \
+                    patch.object(installer.os, "getuid", return_value=1000), \
+                    patch.object(Path, "lstat", return_value=info):
+                installer.check_parents(Path("/tmp/example/config"))
 
 
 class InstallerTests(unittest.TestCase):

@@ -164,6 +164,8 @@ All path overrides must be absolute. `--module-dir` must be a child of
 state, and unit roots must be separate directory trees. Symlink ancestors and
 unsafe shared writable directories of used destinations are refused. Module-only
 installation does not inspect or modify the unrelated user-unit directory.
+Every existing ancestor must be owned by root or your user; a sticky bit does
+not make another user's directory safe. Root-owned sticky `/tmp` is supported.
 If your dotfiles use symlinks,
 use explicit real directory paths or import the source module manually instead.
 

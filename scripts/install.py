@@ -46,7 +46,7 @@ def clean_path(value: str | Path) -> Path:
 
 
 def check_parents(path: Path) -> None:
-    """Reject symlink ancestors and writable directories without a sticky bit."""
+    """Reject foreign-owned, symlinked, or unsafely writable ancestors."""
     for part in (path, *path.parents):
         try:
             info = part.lstat()
@@ -54,6 +54,10 @@ def check_parents(path: Path) -> None:
             continue
         if not stat.S_ISDIR(info.st_mode):
             raise InstallError(f"Not a real directory: {part}")
+        # A sticky directory's owner can rename children owned by another UID.
+        # Only root or this user may retain that authority over installed QML.
+        if info.st_uid not in {0, os.getuid()}:
+            raise InstallError(f"Directory is owned by another user: {part}")
         # A sticky /tmp is suitable for isolated test installations. Ordinary
         # shared writable directories are not safe publication destinations.
         if info.st_mode & 0o022 and not info.st_mode & stat.S_ISVTX:
