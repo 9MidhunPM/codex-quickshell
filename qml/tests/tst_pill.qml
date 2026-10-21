@@ -73,7 +73,7 @@ TestCase {
     function test_default_width_has_no_host_layout_assumptions() {
         var component = Qt.createComponent("../CodexPill.qml");
         compare(component.status, Component.Ready);
-        var standalone = component.createObject(testCase, {controller: mockController});
+        var standalone = component.createObject(testCase, {controller: mockController}) as CodexUi.CodexPill;
         verify(standalone !== null);
         compare(standalone.availableWidth, Number.POSITIVE_INFINITY);
         compare(standalone.compact, false);
