@@ -18,11 +18,13 @@ binary/daemon, a modified checkout, or the system administrator.
   `includeTurns: false`. No prompt, completion, tool execution, thread mutation,
   credit purchase, payment, or billing API is implemented.
 - Account identity is hashed in memory only to invalidate data after account
-  switches. Identity, email, tokens, raw responses, prompts, conversation text,
-  and full workspace paths are excluded from UI snapshots.
+  switches. Account identity fields, email, tokens, raw responses, prompts and
+  turns are excluded from UI snapshots; the `cwd` field becomes its basename.
 - Project basenames, agent nicknames, model names, session UUIDs, state, plan,
   allowances and credits are still sensitive metadata. The UI displays them
-  locally. Avoid screen sharing or publishing a live screenshot unintentionally.
+  locally. User-assigned metadata labels can themselves contain sensitive text;
+  the field allowlist is not a semantic secret scrubber. Avoid screen sharing or
+  publishing a live screenshot unintentionally.
 - The runtime directory is user-owned and private; the bridge socket is `0600`
   and checks Linux peer credentials. It does not listen on a TCP port.
 - Frames, UI commands, strings, page sizes, total thread counts, and per-client

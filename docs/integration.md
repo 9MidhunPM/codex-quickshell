@@ -49,6 +49,8 @@ host's visibility to `service.opened`. See `examples/embedded/shell.qml`.
 The optional `qml/adapters/hyprland/CodexOverlay.qml` adds a layer window and
 Hyprland focus grab. Only import that adapter on Hyprland. Its top/right margins
 and layer namespace are configurable; the default module never loads it.
+The additive installer copies the portable module only. Use the source adapter
+from the checkout, or copy its directory beside your manually maintained module.
 
 ## IPC and transport
 
@@ -65,6 +67,8 @@ there is one status transport and dashboard state.
 
 The frontend defaults to `$XDG_RUNTIME_DIR/codex-quickshell/status.sock`.
 Override `socketPath` when running a bridge with a custom `--socket` location.
+The graphical session must set `XDG_RUNTIME_DIR`; if it is absent, the backend
+uses `/run/user/<uid>` but the frontend requires an explicit `socketPath`.
 Set `transportEnabled: false` only for an explicit synthetic preview or a host
 that feeds validated snapshots itself. A disconnected backend never prevents
 the UI loading; it displays a reconnecting state.
