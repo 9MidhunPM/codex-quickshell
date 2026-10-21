@@ -49,7 +49,7 @@ Item {
     }
     function layoutState() {
         return {
-            version: "0.4.0", view: selectedView, wideLayout: wideLayout,
+            version: "0.5.0", view: selectedView, wideLayout: wideLayout,
             width: width, height: height, desiredHeight: preferredHeight,
             headerHeight: header.height, bodyViewportHeight: panes.height,
             footerHeight: footer.height, toolbarWrapped: toolbarWrapped,

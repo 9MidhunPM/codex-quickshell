@@ -147,7 +147,7 @@ Scope {
     IpcHandler {
         target: root.ipcTarget
         enabled: root.ipcEnabled && root.ipcTarget.length > 0
-        function uiVersion(): string { return "1.0.0"; }
+        function uiVersion(): string { return "0.5.0"; }
         function layoutState(): string { return JSON.stringify(root.dashboard ? root.dashboard.layoutState() : {opened: root.opened}); }
         function open(): void { root.openForScreen(null); }
         function close(): void { root.opened = false; }
