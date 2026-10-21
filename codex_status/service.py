@@ -168,14 +168,19 @@ class Bridge:
             self.usage = mark_usage_stale(self.usage)
 
     async def read_agents(self, rpc: CodexConnection) -> None:
-        ids, cursors = [], set()
+        ids, seen, cursors = [], set(), set()
         cursor = None
         for _ in range(4):
             page = await rpc.read("thread/loaded/list", {"limit": 100, "cursor": cursor})
             values = page.get("data")
-            if not isinstance(values, list):
+            if not isinstance(values, list) or len(values) > 100:
                 raise ProtocolError("Unsupported thread listing")
-            ids.extend(value for value in values if valid_id(value) and value not in ids)
+            for value in values:
+                if valid_id(value) and value not in seen:
+                    if len(ids) >= MAX_THREADS:
+                        raise ProtocolError("Too many loaded sessions")
+                    seen.add(value)
+                    ids.append(value)
             cursor = page.get("nextCursor")
             if not cursor:
                 break
@@ -184,8 +189,6 @@ class Bridge:
             cursors.add(cursor)
         else:
             raise ProtocolError("Thread listing exceeds monitoring bounds")
-        if len(ids) > MAX_THREADS:
-            raise ProtocolError("Too many loaded sessions")
         semaphore = asyncio.Semaphore(4)
 
         async def read_one(thread_id: str) -> dict | None:

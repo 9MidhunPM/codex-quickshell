@@ -354,6 +354,42 @@ class ServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual({method for method, _ in calls}, {"thread/loaded/list", "thread/read"})
         self.assertTrue(all(not params["includeTurns"] for method, params in calls if method == "thread/read"))
 
+    async def test_oversized_thread_page_is_rejected_before_any_metadata_reads(self):
+        rpc = AsyncMock()
+        rpc.read.return_value = {"data": [ROOT] * 101, "nextCursor": None}
+        with self.assertRaises(ProtocolError):
+            await self.bridge.read_agents(rpc)
+        rpc.read.assert_awaited_once_with("thread/loaded/list", {"limit": 100, "cursor": None})
+
+    async def test_duplicate_ids_within_and_across_pages_are_read_once(self):
+        async def read(method, params):
+            if method == "thread/loaded/list":
+                return {"data": [ROOT] * 100 if params["cursor"] is None else [ROOT, CHILD] * 50,
+                        "nextCursor": "second" if params["cursor"] is None else None}
+            return {"thread": thread(params["threadId"])}
+
+        rpc = AsyncMock()
+        rpc.read.side_effect = read
+        await self.bridge.read_agents(rpc)
+        metadata_ids = [call.args[1]["threadId"] for call in rpc.read.await_args_list
+                        if call.args[0] == "thread/read"]
+        self.assertEqual(metadata_ids, [ROOT, CHILD])
+        self.assertEqual(self.bridge.agents["activeCount"], 2)
+
+    async def test_thread_cap_is_enforced_during_pagination_before_metadata_reads(self):
+        identifiers = [f"0199a000-0000-7000-8000-{index:012x}" for index in range(257)]
+        rpc = AsyncMock()
+        rpc.read.side_effect = [
+            {"data": identifiers[:100], "nextCursor": "second"},
+            {"data": identifiers[100:200], "nextCursor": "third"},
+            {"data": identifiers[200:], "nextCursor": None},
+        ]
+        with self.assertRaises(ProtocolError):
+            await self.bridge.read_agents(rpc)
+        self.assertEqual(rpc.read.await_count, 3)
+        self.assertTrue(all(call.args[0] == "thread/loaded/list"
+                            for call in rpc.read.await_args_list))
+
     async def test_raced_metadata_does_not_fabricate_complete_count(self):
         async def read(method, params):
             if method == "thread/loaded/list":
