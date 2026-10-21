@@ -50,6 +50,8 @@ class InstallerTests(unittest.TestCase):
         patch.object(installer.shutil, "which", return_value="/usr/bin/codex").start()
         self.systemctl = patch.object(installer, "run_systemctl",
                                      side_effect=AssertionError("Unexpected systemctl call")).start()
+        patch.object(installer, "read_service_definition",
+                     side_effect=AssertionError("Unexpected manager metadata query")).start()
 
     def invoke(self, *args, service=False, module=None):
         argv = ["--config-root", str(self.config), "--state-root", str(self.state),
@@ -76,6 +78,9 @@ class InstallerTests(unittest.TestCase):
 
     def manifest(self):
         return json.loads((self.state / installer.MANIFEST).read_text())
+
+    def owned_definition(self):
+        return {"LoadState": "loaded", "FragmentPath": str(self.units / installer.UNIT)}
 
     def rewrite_manifest(self, value):
         (self.state / installer.MANIFEST).write_bytes(installer.encode_manifest(value))
@@ -200,6 +205,17 @@ class InstallerTests(unittest.TestCase):
         (self.base / "systemd").symlink_to(real, target_is_directory=True)
         self.assertEqual(self.invoke("--install", service=True)[0], 1)
         self.assertFalse(self.module.exists())
+
+    def test_module_only_ignores_unrelated_symlinked_unit_directory(self):
+        real = self.base / "real-units"
+        real.mkdir()
+        (self.base / "systemd").symlink_to(real, target_is_directory=True)
+        self.install()
+        result, output = self.invoke("--uninstall")
+        self.assertEqual(result, 0, output)
+        self.assertTrue((self.base / "systemd").is_symlink())
+        self.assertEqual(list(real.iterdir()), [])
+        self.systemctl.assert_not_called()
 
     def test_writable_config_ancestor_is_refused(self):
         self.config.parent.chmod(0o777)
@@ -391,6 +407,7 @@ class InstallerTests(unittest.TestCase):
 
     def test_default_root_activation_is_explicit_and_ordered(self):
         with patch.object(installer, "assert_service_name_unused") as probe, \
+                patch.object(installer, "read_service_definition", return_value=self.owned_definition()), \
                 patch.object(installer, "run_systemctl") as control:
             result, output = self.invoke_default_roots("--install", "--activate")
         self.assertEqual(result, 0, output)
@@ -415,11 +432,13 @@ class InstallerTests(unittest.TestCase):
                 raise installer.InstallError("activation failed")
 
         with patch.object(installer, "assert_service_name_unused"), \
+                patch.object(installer, "read_service_definition", return_value=self.owned_definition()), \
                 patch.object(installer, "run_systemctl", side_effect=control):
             result, output = self.invoke_default_roots("--install", "--activate")
         self.assertEqual(result, 1)
         self.assertIn("rolled back", output)
-        self.assertEqual(calls[-1], ("disable", "--now", installer.UNIT))
+        self.assertIn(("disable", "--now", installer.UNIT), calls)
+        self.assertEqual(calls[-1], ("daemon-reload",))
         self.assertFalse(self.module.exists())
         self.assertFalse(self.state.exists())
 
@@ -429,6 +448,7 @@ class InstallerTests(unittest.TestCase):
                 raise installer.InstallError("user manager unavailable")
 
         with patch.object(installer, "assert_service_name_unused"), \
+                patch.object(installer, "read_service_definition", return_value=self.owned_definition()), \
                 patch.object(installer, "run_systemctl", side_effect=control):
             result, output = self.invoke_default_roots("--install", "--activate")
         self.assertEqual(result, 1)
@@ -450,11 +470,121 @@ class InstallerTests(unittest.TestCase):
         result, output = self.invoke_default_roots("--install")
         self.assertEqual(result, 0, output)
         self.systemctl.assert_not_called()
-        with patch.object(installer, "run_systemctl") as control:
+        with patch.object(installer, "read_service_definition", return_value=self.owned_definition()), \
+                patch.object(installer, "run_systemctl") as control:
             result, output = self.invoke_default_roots("--uninstall")
         self.assertEqual(result, 0, output)
         self.assertEqual([call.args for call in control.call_args_list],
                          [("disable", "--now", installer.UNIT), ("daemon-reload",)])
+
+    def test_missing_owned_unit_never_stops_a_foreign_manager_definition(self):
+        self.assertEqual(self.invoke_default_roots("--install")[0], 0)
+        (self.units / installer.UNIT).unlink()
+        before = self.tree()
+        foreign = {"LoadState": "loaded", "FragmentPath": "/etc/systemd/user/codex-quickshell.service"}
+        with patch.object(installer, "read_service_definition", return_value=foreign):
+            result, output = self.invoke_default_roots("--uninstall")
+        self.assertEqual(result, 1)
+        self.assertIn("foreign", output)
+        self.assertEqual(before, self.tree())
+        self.systemctl.assert_not_called()
+
+    def test_existing_owned_file_does_not_authorize_stopping_foreign_loaded_unit(self):
+        self.assertEqual(self.invoke_default_roots("--install")[0], 0)
+        foreign = {"LoadState": "loaded", "FragmentPath": "/run/user/1234/systemd/transient/codex-quickshell.service"}
+        with patch.object(installer, "read_service_definition", return_value=foreign):
+            self.assertEqual(self.invoke_default_roots("--uninstall")[0], 1)
+        self.assertTrue((self.module / "qmldir").exists())
+        self.assertTrue((self.units / installer.UNIT).exists())
+        self.systemctl.assert_not_called()
+
+    def test_missing_unit_and_confirmed_absent_manager_need_no_service_control(self):
+        self.assertEqual(self.invoke_default_roots("--install")[0], 0)
+        (self.units / installer.UNIT).unlink()
+        absent = {"LoadState": "not-found", "FragmentPath": ""}
+        with patch.object(installer, "read_service_definition", return_value=absent):
+            result, output = self.invoke_default_roots("--uninstall")
+        self.assertEqual(result, 0, output)
+        self.assertFalse(self.state.exists())
+        self.assertFalse(self.module.exists())
+        self.systemctl.assert_not_called()
+
+    def test_missing_unit_with_loaded_own_path_requires_manual_resolution(self):
+        self.assertEqual(self.invoke_default_roots("--install")[0], 0)
+        (self.units / installer.UNIT).unlink()
+        with patch.object(installer, "read_service_definition", return_value=self.owned_definition()):
+            result, output = self.invoke_default_roots("--uninstall")
+        self.assertEqual(result, 1)
+        self.assertIn("unit is missing while still loaded", output)
+        self.assertTrue(self.state.exists())
+        self.systemctl.assert_not_called()
+
+    def test_unloaded_verified_unit_is_disabled_without_stopping_a_name(self):
+        self.assertEqual(self.invoke_default_roots("--install")[0], 0)
+        unloaded = {"LoadState": "not-found", "FragmentPath": ""}
+        with patch.object(installer, "read_service_definition", return_value=unloaded), \
+                patch.object(installer, "run_systemctl") as control:
+            result, output = self.invoke_default_roots("--uninstall")
+        self.assertEqual(result, 0, output)
+        self.assertEqual([call.args for call in control.call_args_list],
+                         [("disable", installer.UNIT), ("daemon-reload",)])
+
+    def test_unverifiable_manager_preserves_all_files_during_uninstall(self):
+        self.assertEqual(self.invoke_default_roots("--install")[0], 0)
+        before = self.tree()
+        with patch.object(installer, "read_service_definition",
+                          side_effect=installer.InstallError("manager unavailable")):
+            self.assertEqual(self.invoke_default_roots("--uninstall")[0], 1)
+        self.assertEqual(before, self.tree())
+        self.systemctl.assert_not_called()
+
+    def test_activation_checks_loaded_fragment_before_enabling(self):
+        foreign = {"LoadState": "loaded", "FragmentPath": "/etc/systemd/user/codex-quickshell.service"}
+        with patch.object(installer, "assert_service_name_unused"), \
+                patch.object(installer, "read_service_definition", return_value=foreign), \
+                patch.object(installer, "run_systemctl") as control:
+            result, output = self.invoke_default_roots("--install", "--activate")
+        self.assertEqual(result, 1)
+        self.assertIn("foreign", output)
+        self.assertFalse(self.state.exists())
+        self.assertEqual([call.args for call in control.call_args_list],
+                         [("daemon-reload",), ("daemon-reload",)])
+
+    def test_rollback_never_stops_a_replacement_foreign_definition(self):
+        foreign = {"LoadState": "loaded", "FragmentPath": "/etc/systemd/user/codex-quickshell.service"}
+        calls = []
+
+        def control(*args):
+            calls.append(args)
+            if args == ("enable", "--now", installer.UNIT):
+                raise installer.InstallError("activation failed after definition changed")
+
+        with patch.object(installer, "assert_service_name_unused"), \
+                patch.object(installer, "read_service_definition", side_effect=[self.owned_definition(), foreign]), \
+                patch.object(installer, "run_systemctl", side_effect=control):
+            result, output = self.invoke_default_roots("--install", "--activate")
+        self.assertEqual(result, 1)
+        self.assertIn("manifest retained", output)
+        self.assertNotIn(("disable", "--now", installer.UNIT), calls)
+        self.assertTrue((self.module / "qmldir").exists())
+
+    def test_rollback_rechecks_disk_hash_before_stopping(self):
+        calls = []
+
+        def control(*args):
+            calls.append(args)
+            if args == ("enable", "--now", installer.UNIT):
+                (self.units / installer.UNIT).write_bytes(b"concurrent foreign edit")
+                raise installer.InstallError("activation failed after unit edit")
+
+        with patch.object(installer, "assert_service_name_unused"), \
+                patch.object(installer, "read_service_definition", return_value=self.owned_definition()), \
+                patch.object(installer, "run_systemctl", side_effect=control):
+            result, output = self.invoke_default_roots("--install", "--activate")
+        self.assertEqual(result, 1)
+        self.assertIn("manifest retained", output)
+        self.assertNotIn(("disable", "--now", installer.UNIT), calls)
+        self.assertEqual((self.units / installer.UNIT).read_bytes(), b"concurrent foreign edit")
 
     def test_service_options_are_incompatible_with_no_service(self):
         for flags in (("--terminal", "foot -e"), ("--codex-bin", "/usr/bin/codex"), ("--disable-actions",)):
@@ -468,6 +598,20 @@ class InstallerTests(unittest.TestCase):
 
     def test_relative_codex_executable_is_refused(self):
         self.assertEqual(self.invoke("--install", "--codex-bin", "relative/codex", service=True)[0], 1)
+
+    def test_quoted_home_codex_path_is_expanded_consistently(self):
+        self.install("--codex-bin", "~/bin/codex", service=True)
+        unit = (self.units / installer.UNIT).read_text()
+        self.assertIn("--codex-bin " + installer.systemd_quote(str(Path.home() / "bin/codex")), unit)
+        self.assertNotIn("/~/", unit)
+
+    def test_literal_placeholder_text_in_paths_is_not_interpolated(self):
+        binary = "/opt/@OPTIONS@/codex"
+        terminal = "terminal --title @UNRELATED@ -e"
+        self.install("--codex-bin", binary, "--terminal", terminal, service=True)
+        unit = (self.units / installer.UNIT).read_text()
+        self.assertIn("--codex-bin " + installer.systemd_quote(binary), unit)
+        self.assertIn("--terminal " + installer.systemd_quote(terminal), unit)
 
     def test_rendered_unit_escapes_paths_and_terminal_arguments(self):
         self.install("--codex-bin", '/opt/program " $CODING %/codex',
@@ -643,8 +787,14 @@ class InstallerTests(unittest.TestCase):
 
 
 class EncodingTests(unittest.TestCase):
-    def test_working_directory_uses_setting_escaping(self):
-        self.assertEqual(installer.systemd_directory("/opt/source path %/"), "/opt/source\\x20path\\x20%%/")
+    def test_working_directory_keeps_spaces_and_only_escapes_specifiers(self):
+        self.assertEqual(installer.systemd_directory("/opt/source path %/"), "/opt/source path %%")
+        self.assertEqual(installer.systemd_directory("/opt/source\\directory"), "/opt/source\\directory")
+
+    def test_working_directory_refuses_unrepresentable_line_endings(self):
+        for path in ("/opt/directory ", "/opt/directory\\"):
+            with self.subTest(path=path), self.assertRaises(installer.InstallError):
+                installer.systemd_directory(path)
 
     def test_systemd_word_escapes_expansion_characters(self):
         self.assertEqual(installer.systemd_quote('a"b\\c%d$e'), '"a\\"b\\\\c%%d$$e"')
@@ -661,7 +811,7 @@ class ActivationProbeTests(unittest.TestCase):
         with patch.object(installer.subprocess, "run", return_value=result) as run:
             installer.assert_service_name_unused()
         self.assertEqual(run.call_args.args[0],
-                         ["systemctl", "--user", "show", "--no-pager", "--property=LoadState",
+                         ["systemctl", "--user", "show", "--no-pager", "--all", "--property=LoadState",
                           "--property=FragmentPath", installer.UNIT])
 
     def test_global_and_transient_units_are_refused(self):
@@ -682,6 +832,15 @@ class ActivationProbeTests(unittest.TestCase):
         with patch.object(installer.subprocess, "run", side_effect=subprocess.TimeoutExpired("systemctl", 20)), \
                 self.assertRaises(installer.InstallError):
             installer.assert_service_name_unused()
+
+    def test_ambiguous_or_incomplete_manager_metadata_is_refused(self):
+        for output in ("LoadState=not-found\n", "FragmentPath=\n",
+                       "LoadState=not-found\nLoadState=loaded\nFragmentPath=\n",
+                       "LoadState=not-found\nFragmentPath=\nUnexpected=value\n"):
+            with self.subTest(output=output), patch.object(
+                    installer.subprocess, "run", return_value=subprocess.CompletedProcess([], 0, output, "")), \
+                    self.assertRaises(installer.InstallError):
+                installer.read_service_definition()
 
 
 if __name__ == "__main__":

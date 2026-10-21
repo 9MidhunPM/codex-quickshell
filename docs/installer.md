@@ -129,6 +129,13 @@ safe place, restore the installed version, then retry. Missing tracked files are
 safe to forget, which allows interrupted uninstalls to resume. Untracked files
 are preserved, and directories are removed only when empty.
 
+Service control also checks the user manager's loaded unit path against the
+hash-verified installed file. It never stops a global or transient unit merely
+because it has the same name. If the installed unit was deleted while a
+definition is still loaded, uninstall stops for manual resolution. If both the
+file and manager definition are absent, it removes the remaining owned files
+without controlling a service. An unavailable manager preserves the installation.
+
 Because installation never replaces existing user files, it does not create
 copies of your personal configuration as backups. The private manifest records
 new paths, options, and hashes only. Created files are mode `0600`, and new
@@ -145,12 +152,19 @@ For a new release or different options, uninstall the current installation and
 install the new one. Repeat the same installation options when checking
 idempotence, including `--standalone`, `--terminal`, or `--activate` if used.
 
+Service checkout paths may contain ordinary spaces. A checkout directory whose
+name ends in whitespace or a backslash is refused because systemd cannot safely
+represent that path in the `WorkingDirectory` setting. Rename that checkout or
+use a module-only installation and run the backend yourself.
+
 ## Custom roots and fixtures
 
 All path overrides must be absolute. `--module-dir` must be a child of
 `--config-root`; it cannot overlap the separate `codex-status` shell. Config,
 state, and unit roots must be separate directory trees. Symlink ancestors and
-unsafe shared writable directories are refused. If your dotfiles use symlinks,
+unsafe shared writable directories of used destinations are refused. Module-only
+installation does not inspect or modify the unrelated user-unit directory.
+If your dotfiles use symlinks,
 use explicit real directory paths or import the source module manually instead.
 
 ```sh

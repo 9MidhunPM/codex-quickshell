@@ -104,17 +104,18 @@ def systemd_quote(value: str) -> str:
 
 
 def systemd_directory(value: str) -> str:
-    clean_path(value)
+    value = str(clean_path(value))
     # WorkingDirectory is a setting value, not an ExecStart argument. Avoid
-    # quotes becoming part of the path and preserve leading/trailing spaces.
-    return value.replace("\\", "\\\\").replace("%", "%%").replace(" ", "\\x20")
+    # quotes and C-style escapes becoming literal parts of the directory name.
+    # The generic config reader strips trailing whitespace/joins backslash lines.
+    if value[-1].isspace() or value.endswith("\\"):
+        raise InstallError("Service checkout path cannot end in whitespace or a backslash")
+    return value.replace("%", "%%")
 
 
 def render_unit(codex: str | None, terminal: str | None = None,
                 disable_actions: bool = False) -> bytes:
-    if codex is not None:
-        clean_path(codex)
-    binary = codex or shutil.which("codex")
+    binary = str(clean_path(codex)) if codex is not None else shutil.which("codex")
     if not binary:
         raise InstallError("Codex CLI is not on PATH; use --codex-bin or --no-service")
     binary = str(clean_path(os.path.abspath(binary)))
@@ -126,12 +127,17 @@ def render_unit(codex: str | None, terminal: str | None = None,
         arguments += " --terminal " + systemd_quote(terminal)
     if disable_actions:
         arguments += " --disable-actions"
-    result = template.replace("@REPO@", systemd_directory(str(REPO))).replace(
-        "@PYTHON@", systemd_quote(str(clean_path(sys.executable)))
-    ).replace("@CODEX@", systemd_quote(binary)).replace("@OPTIONS@", arguments)
-    if re.search(r"@[A-Z_]+@", result):
-        raise InstallError("Service template has an unknown placeholder")
-    return result.encode("utf-8")
+    replacements = {"@REPO@": systemd_directory(str(REPO)),
+                    "@PYTHON@": systemd_quote(str(clean_path(sys.executable))),
+                    "@CODEX@": systemd_quote(binary), "@OPTIONS@": arguments}
+
+    def substitute(match: re.Match) -> str:
+        if match.group() not in replacements:
+            raise InstallError("Service template has an unknown placeholder")
+        return replacements[match.group()]
+
+    # Single-pass substitution never interprets placeholder-like path data.
+    return re.sub(r"@[A-Z_]+@", substitute, template).encode("utf-8")
 
 
 def source_assets() -> dict[str, bytes]:
@@ -191,7 +197,9 @@ def settings(args) -> dict:
             left.is_relative_to(right) or right.is_relative_to(left)
             for index, left in enumerate(roots) for right in roots[index + 1:]):
         raise InstallError("Config, state and unit roots must be separate directories")
-    for root in [*roots, module]:
+    # The unit root is checked when a unit file is actually planned or loaded
+    # from the manifest. Module-only installation must not inspect that tree.
+    for root in [config, state, module]:
         check_parents(root)
     if args.activate and (args.no_service or tuple(roots) != defaults
                           or any((args.config_root, args.state_root, args.unit_root))):
@@ -312,20 +320,59 @@ def run_systemctl(*args: str) -> None:
         raise InstallError(f"systemctl {' '.join(args)} failed (exit {result.returncode})")
 
 
-def assert_service_name_unused() -> None:
-    """Do not shadow an existing global or transient user unit on activation."""
+def read_service_definition() -> dict[str, str]:
+    """Read bounded manager metadata without accepting an unavailable bus as absent."""
     try:
         result = subprocess.run(
-            ["systemctl", "--user", "show", "--no-pager", "--property=LoadState",
+            ["systemctl", "--user", "show", "--no-pager", "--all", "--property=LoadState",
              "--property=FragmentPath", UNIT],
             capture_output=True, text=True, timeout=20, check=False,
         )
     except (OSError, subprocess.SubprocessError) as exc:
-        raise InstallError("Could not verify the user service name before activation") from exc
-    values = dict(line.split("=", 1) for line in result.stdout.splitlines() if "=" in line)
+        raise InstallError("Could not verify the user service definition") from exc
+    entries = [line.split("=", 1) for line in result.stdout.splitlines() if "=" in line]
+    values = dict(entries)
     if (len(result.stdout) > 4096 or result.returncode not in (0, 1, 4)
-            or values.get("LoadState") != "not-found" or values.get("FragmentPath", "")):
+            or len(entries) != len(values) or set(values) != {"LoadState", "FragmentPath"}
+            or values["LoadState"] not in {"loaded", "not-found", "masked", "error", "bad-setting"}):
+        raise InstallError("The user service definition cannot be verified")
+    return values
+
+
+def assert_service_name_unused() -> None:
+    """Do not shadow an existing global or transient user unit on activation."""
+    values = read_service_definition()
+    if values["LoadState"] != "not-found" or values["FragmentPath"]:
         raise InstallError("The service name is already defined or cannot be verified; refusing activation")
+
+
+def owned_service_state(manifest: dict) -> str:
+    """Return loaded/unloaded/absent only when no foreign unit can be controlled."""
+    item = next((item for item in manifest["files"] if item["kind"] == "unit"), None)
+    if item is None:
+        raise InstallError("No service ownership entry exists")
+    path = Path(item["path"])
+    data = owned_file(path, optional=True)
+    if data is not None and digest(data) != item["sha256"]:
+        raise InstallError("Installed service was modified; refusing service control")
+    values = read_service_definition()
+    if values["LoadState"] == "not-found" and not values["FragmentPath"]:
+        return "absent" if data is None else "unloaded"
+    if values["LoadState"] != "loaded" or values["FragmentPath"] != str(path):
+        raise InstallError("The manager resolves a foreign or unsupported service; preserving the installation")
+    if data is None:
+        raise InstallError("The installed unit is missing while still loaded; restore its verified bytes or resolve it manually")
+    return "loaded"
+
+
+def stop_owned_service(manifest: dict) -> str:
+    state = owned_service_state(manifest)
+    if state == "loaded":
+        run_systemctl("disable", "--now", UNIT)
+    elif state == "unloaded":
+        # No loaded unit exists to stop. Remove only this verified file's links.
+        run_systemctl("disable", UNIT)
+    return state
 
 
 def real_service_roots(config: dict) -> bool:
@@ -399,6 +446,7 @@ def install(config: dict, args, existing: dict | None, *, dry_run: bool) -> None
     written: list[tuple[Path, bytes]] = []
     manifest_created = False
     activation_attempted = False
+    manager_reloaded = False
     try:
         # Create state ancestors first, then publish a journal before module files.
         for path in directories:
@@ -417,8 +465,13 @@ def install(config: dict, args, existing: dict | None, *, dry_run: bool) -> None
             atomic_publish(path, data)
             written.append((path, data))
         if config["activated"]:
-            activation_attempted = True
+            # Verify the disk entry before asking the manager to load it.
+            verify_installed(manifest)
             run_systemctl("daemon-reload")
+            manager_reloaded = True
+            if owned_service_state(manifest) != "loaded":
+                raise InstallError("The manager did not load the verified installed unit")
+            activation_attempted = True
             run_systemctl("enable", "--now", UNIT)
         manifest["status"] = "installed"
         atomic_publish(state / MANIFEST, encode_manifest(manifest), replace=True)
@@ -426,7 +479,7 @@ def install(config: dict, args, existing: dict | None, *, dry_run: bool) -> None
         cleanup_safe = True
         if activation_attempted:
             try:
-                run_systemctl("disable", "--now", UNIT)
+                stop_owned_service(manifest)
             except InstallError:
                 cleanup_safe = False
         if cleanup_safe:
@@ -438,6 +491,13 @@ def install(config: dict, args, existing: dict | None, *, dry_run: bool) -> None
                         cleanup_safe = False
                 except (OSError, InstallError):
                     cleanup_safe = False
+        if cleanup_safe and manager_reloaded:
+            try:
+                # Drop the removed unit from the manager's cache so retrying an
+                # installation cannot mistake our rolled-back unit for foreign.
+                run_systemctl("daemon-reload")
+            except InstallError:
+                cleanup_safe = False
         if cleanup_safe and manifest_created:
             (state / MANIFEST).unlink()
         remove_empty_directories(created)
@@ -468,8 +528,9 @@ def uninstall(config: dict, args, manifest: dict | None, *, dry_run: bool) -> No
         return
     # Fixture roots never control the real user manager. Only our exact unit at
     # the default roots may be stopped, after all owned-file hashes have passed.
+    service_state = "fixture"
     if saved["service"] and real_service_roots(saved):
-        run_systemctl("disable", "--now", UNIT)
+        service_state = stop_owned_service(manifest)
     for item in reversed(manifest["files"]):
         path = Path(item["path"])
         data = owned_file(path, optional=True)
@@ -477,7 +538,7 @@ def uninstall(config: dict, args, manifest: dict | None, *, dry_run: bool) -> No
             if digest(data) != item["sha256"]:
                 raise InstallError(f"File changed during uninstall; preserving it and the manifest: {path}")
             path.unlink()
-    if saved["service"] and real_service_roots(saved):
+    if service_state in ("loaded", "unloaded"):
         run_systemctl("daemon-reload")
     (Path(saved["stateRoot"]) / MANIFEST).unlink()
     remove_empty_directories(manifest["directories"])
