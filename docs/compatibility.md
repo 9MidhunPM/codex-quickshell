@@ -14,6 +14,8 @@ are no compositor-specific imports in the default controller/window.
 
 A compositor or window manager may tile, decorate, reposition, or constrain a
 standard window. Configure its window rules if you want a floating placement.
+Native Hyprland testing confirmed that tab changes do not force its outer window
+to resize; Home content stays compact inside the space assigned by the compositor.
 The default minimum size is 300 × 280; an unusually small screen or forced
 tiling may constrain the layout. This project cannot guarantee every existing
 theme, custom Qt plugin, monitor arrangement, or future Quickshell version.
