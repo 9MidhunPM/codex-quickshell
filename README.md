@@ -3,6 +3,10 @@
 A small, private Codex status module that lives alongside your Quickshell setup.
 Keep the home view compact; open Usage and Agents for the full details.
 
+![Compact Codex Quickshell Home view with allowance summaries and agent activity](docs/assets/home.png)
+
+*Actual interface capture with synthetic demo data; no live account information.*
+
 - Subscription allowance windows, reset times, and exact credit values reported by Codex.
 - Loaded sessions and subagents, with their own reported model, nickname, workspace, and state.
 - A normal desktop window by default, an optional Hyprland overlay, or your own window host.
@@ -12,6 +16,22 @@ Keep the home view compact; open Usage and Agents for the full details.
 **API Platform:** the Usage and Billing buttons open official dashboard pages.
 This release does **not** fetch an API balance. API Platform billing and Codex
 subscription allowances are separate; neither is estimated from the other.
+
+## Screenshots
+
+These are captures of the actual Quickshell UI using synthetic demo data with
+transport disabled. They contain no live account or project data.
+
+### Usage
+
+![Codex Quickshell Usage tab showing full allowance windows, reset times, and credit details](docs/assets/usage.png)
+
+### Agents
+
+![Codex Quickshell Agents tab showing demo sessions, individual models, workspaces, and activity](docs/assets/agents.png)
+
+To regenerate the images, run `python3 scripts/capture_screenshots.py`.
+See [screenshot provenance](docs/assets/README.md) for details.
 
 ## Requirements
 
